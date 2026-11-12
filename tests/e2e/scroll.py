@@ -1,0 +1,30 @@
+from playwright.sync_api import sync_playwright
+from config import DIST, EXE, PCODE, BAD, TLB, SHOTS, launch
+with sync_playwright() as p:
+    b = launch(p)
+    for vp in [(1600, 950), (1280, 720)]:
+        pg = b.new_page(viewport={'width': vp[0], 'height': vp[1]})
+        pg.goto(DIST); pg.set_input_files('[data-testid=file-input]', EXE)
+        pg.wait_for_selector('.tabpane:not(.hidden) [data-testid=overview]', timeout=60000); pg.wait_for_timeout(500)
+        def wheel(sel, name):
+            el = pg.query_selector(sel); bb = el.bounding_box()
+            pg.mouse.move(bb['x'] + bb['width'] / 2, bb['y'] + min(bb['height'] / 2, 300))
+            before = el.evaluate('e => e.scrollTop')
+            pg.mouse.wheel(0, 1500); pg.wait_for_timeout(300)
+            after = el.evaluate('e => e.scrollTop')
+            fits = el.evaluate('e => e.scrollHeight <= e.clientHeight')
+            print(vp, ('PASS' if after > before else 'n/a (content fits)' if fits else 'FAIL'), name, before, '->', after, 'client', el.evaluate('e => e.clientHeight'), 'scroll', el.evaluate('e => e.scrollHeight'))
+        wheel('[data-testid=tree]', 'tree (initial)')
+        pg.eval_on_selector('[data-testid=tree]', 'e => e.scrollTop = 0'); pg.wait_for_timeout(200); pg.click('.tree-row[data-id="obj:0"] .twisty'); pg.wait_for_timeout(300); pg.eval_on_selector('[data-testid=tree]', 'e => e.scrollTop = 0')
+        wheel('[data-testid=tree]', 'tree (kelet expanded)')
+        wheel('.ov', 'overview')
+        pg.eval_on_selector('[data-testid=tree]', 'e => e.scrollTop = 0'); pg.wait_for_timeout(200); pg.click('.tree-row[data-id="obj:0"] .lbl'); pg.wait_for_selector('.tabpane:not(.hidden) [data-testid=designer]'); pg.wait_for_timeout(800)
+        wheel('.tabpane:not(.hidden) [data-testid=designer]', 'designer')
+        wheel('[data-testid=inspector]', 'inspector (form props)')
+        pg.keyboard.press('g'); pg.keyboard.type('kelet.Form_Load'); pg.keyboard.press('Enter'); pg.wait_for_selector('.tabpane:not(.hidden) [data-testid=code]'); pg.wait_for_timeout(500)
+        wheel('.tabpane:not(.hidden) [data-testid=code]', 'code')
+        wheel('[data-testid=inspector]', 'inspector (proc)')
+        pg.keyboard.press('Control+k'); pg.keyboard.type('>strings'); pg.wait_for_timeout(300); pg.keyboard.press('Enter'); pg.wait_for_selector('.tabpane:not(.hidden) [data-testid=strings]'); pg.wait_for_timeout(400)
+        wheel('.tabpane:not(.hidden) [data-testid=strings] .tbl-body', 'strings table')
+        pg.close()
+    b.close()

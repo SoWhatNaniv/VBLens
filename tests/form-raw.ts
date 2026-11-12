@@ -1,0 +1,11 @@
+import { readFileSync } from 'fs';
+import { Image, hex } from '../src/core/pe/pe';
+import { parseVBProject } from '../src/core/vb/structures';
+const img = new Image(new Uint8Array(readFileSync(process.env.VB_SAMPLE ?? 'samples/EshkolPlus.exe')));
+const p = parseVBProject(img);
+const o = p.objects.find(o => o.name === (process.argv[2] ?? 'frm_find'))!;
+const b = img.slice(o.formDataVA, o.formDataSize);
+console.log(o.name, b.length);
+const hexs = (a: Uint8Array) => [...a].map(x => x.toString(16).padStart(2, '0')).join(' ');
+const asc = (a: Uint8Array) => [...a].map(x => (x >= 32 && x < 127 ? String.fromCharCode(x) : '.')).join('');
+for (let i = 0; i < Math.min(b.length, Number(process.argv[3] ?? 1024)); i += 32) console.log(i.toString(16).padStart(5), hexs(b.subarray(i, i + 32)).padEnd(96), asc(b.subarray(i, i + 32)));

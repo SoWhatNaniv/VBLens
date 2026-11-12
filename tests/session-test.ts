@@ -1,0 +1,18 @@
+import { readFileSync, writeFileSync } from 'fs';
+import { Session } from '../src/core/session';
+const t0 = Date.now();
+const s = new Session(new Uint8Array(readFileSync(process.argv[2] ?? process.env.VB_SAMPLE ?? 'samples/EshkolPlus.exe')), 'EshkolPlus.exe', (m, p) => {});
+console.log('load ms', Date.now() - t0);
+const ov = s.overview();
+console.log(ov.projectName, ov.compile, ov.functions, ov.objects, ov.topRuntime.slice(0, 3));
+const tree = s.tree();
+console.log(tree.map(n => `${n.label}(${n.badge ?? ''})`).join(' '));
+const d = s.decompile(0x5c7150); console.log(d.title, d.lines.length);
+const da = s.disasm(0x5c7150); console.log('disasm rows', da.rows.length);
+const g = s.graph(0x5c7150); console.log('graph', g.nodes.length, g.edges.length);
+const fv = s.form(0)!; console.log('form', fv.name, fv.root?.children.length);
+console.log(s.search('Form_Load').slice(0, 3));
+console.log(s.funcInfo(0x5c7150)?.callers.length, s.funcInfo(0x5c7150)?.callees.length);
+const src = s.objectSource(2); console.log('module src lines', src.lines.length);
+let t = Date.now(); const z = s.exportZip(); console.log('zip', z.length, Date.now() - t, 'ms');
+writeFileSync('/tmp/export.zip', z);

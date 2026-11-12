@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-mcp/
+dist-dev/
+release/
+build/
+samples/
+*.zip
+.DS_Store
+
+# seller's signing key and sales log: never commit or ship
+license/
+
+# README screenshots of private samples and test output
+tests/e2e/shots/
+__pycache__/
+*.pyc

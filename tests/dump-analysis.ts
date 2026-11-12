@@ -1,0 +1,20 @@
+import { readFileSync } from 'fs';
+import { Image, hex } from '../src/core/pe/pe';
+import { parseVBProject } from '../src/core/vb/structures';
+import { analyze, disassembleFunction } from '../src/core/analysis/analysis';
+const img = new Image(new Uint8Array(readFileSync(process.argv[2] ?? process.env.VB_SAMPLE ?? 'samples/EshkolPlus.exe')));
+const p = parseVBProject(img);
+const an = analyze(img, p);
+console.log('funcs', an.funcs.length, 'thunks', an.thunks.size, 'declStubs', an.declareStubs.size, 'strings', an.strings.size, 'xrefs', an.xrefs.size, an.stats);
+const kinds: Record<string, number> = {};
+for (const f of an.funcs) kinds[f.kind] = (kinds[f.kind] ?? 0) + 1;
+console.log(kinds);
+const perObj: Record<string, number> = {};
+for (const f of an.funcs) { const n = f.obj >= 0 ? p.objects[f.obj].name : '?'; perObj[n] = (perObj[n] ?? 0) + 1; }
+console.log(Object.entries(perObj).filter(([n]) => p.objects.find(o => o.name === n)?.kind === 'Module' || n === '?').map(([n, c]) => `${n}:${c}/${p.objects.find(o => o.name === n)?.methodCount}`).join(' '));
+console.log([...an.strings.values()].slice(0, 15).map(s => JSON.stringify(s.text)).join(' | '));
+console.log(an.funcs.filter(f => f.kind === 'main').map(f => f.fullName));
+const f = an.funcByVA.get(0x5c7150)!;
+const fc = disassembleFunction(an, f);
+console.log(f.fullName, fc.insns.length, 'blocks', fc.blocks.length, 'unreached', fc.unreached.map(u => hex(u.start) + '-' + hex(u.end)));
+let t = Date.now(); let nb = 0; for (const g of an.funcs) nb += disassembleFunction(an, g).blocks.length; console.log('all CFG', Date.now() - t, 'ms', nb, 'blocks');

@@ -1,0 +1,10 @@
+import { readFileSync } from 'fs';
+import { loadTypeLibFromFile, controlClassesFromTypeLib } from '../src/core/typelib/msft';
+const tl = loadTypeLibFromFile(new Uint8Array(readFileSync(process.argv[2])));
+console.log(tl.name, tl.guid, tl.version, tl.types.length);
+const cc = controlClassesFromTypeLib(tl);
+for (const c of cc.slice(0, 40)) console.log(c.name, c.eventsGuid, c.events.length, c.events.slice(0, 8).join(','), Object.keys(c.members).length, Object.keys(c.dispids).length);
+const form = cc.find(c => c.name === 'Form')!;
+console.log(Object.entries(form.dispids).slice(0, 12));
+console.log(Object.entries(form.members).slice(0, 8), Object.entries(form.members).slice(-4));
+const img = cc.find(c => c.name === 'Image')!; console.log(img.events);

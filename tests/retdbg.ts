@@ -1,0 +1,10 @@
+import { readFileSync } from 'fs';
+import { Session } from '../src/core/session';
+import { NativeDecompiler } from '../src/core/decompiler/native';
+import { printE } from '../src/core/decompiler/ir';
+const s = new Session(new Uint8Array(readFileSync(process.env.VB_SAMPLE ?? 'samples/EshkolPlus.exe')), 'x');
+const f = s.an.funcs.find(f => f.fullName === process.argv[2])!;
+const d = new NativeDecompiler(s.an, f, { forms: s.forms });
+d.run();
+console.log(d.retVals.map(r => [r.va.toString(16), r.eax ? r.eax.k + ' ' + printE(r.eax) : '-']));
+console.log([...d.noise].map(x => x.toString(16)));
