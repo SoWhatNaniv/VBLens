@@ -22,7 +22,7 @@ const result = await build({
   format: 'esm',
   logLevel: 'warning',
   banner: { js: "import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);" },
-  define: { __VBLENS_APP_HTML__: JSON.stringify(readFileSync(app, 'utf8')) },
+  define: { __VBLENS_APP_HTML__: JSON.stringify(readFileSync(app, 'utf8')), __VBLENS_VERSION__: JSON.stringify(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version) },
 });
 // Open-source packages bundled into the engine and the app keep their license texts.
 const pkgs = new Set(['react', 'react-dom', 'scheduler', 'fflate']); // in the app (dist/index.html)

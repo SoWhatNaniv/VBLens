@@ -28,7 +28,9 @@ import { getSettings } from './settings';
 import { config, openFile } from './state';
 import { registerTools } from './tools';
 
-const VERSION = '1.0.0';
+declare const __VBLENS_VERSION__: string | undefined;
+/** package.json version, filled in by mcp/build.mjs */
+const VERSION = typeof __VBLENS_VERSION__ === 'string' ? __VBLENS_VERSION__ : 'dev';
 
 const INSTRUCTIONS = `Static analysis of Visual Basic 5/6 executables (native code and P-Code). Nothing is ever executed.
 
