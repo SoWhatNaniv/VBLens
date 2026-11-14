@@ -12,7 +12,8 @@ export interface RtCtx {
   fpuPush(e: E): void;
   fpuPop(): E;
   emit(s: Stmt): void;
-  store(addr: E, v: E, opts?: { set?: boolean }): E;
+  /** vt: the VB type the runtime helper stores (evidence for local variable types) */
+  store(addr: E, v: E, opts?: { set?: boolean; vt?: string }): E;
   lv(addr: E): E;
   variant(addr: E): E;
   deref(addr: E): E;
@@ -127,7 +128,7 @@ export function runtimeCall(name: string, ctx: RtCtx): void {
     // --- strings ---
     case '__vbaStrCopy': case '__vbaStrMove': {
       const dst = r('ecx'), src = r('edx');
-      ctx.setReg('eax', ctx.store(dst, src));
+      ctx.setReg('eax', ctx.store(dst, src, { vt: 'String' }));
       return;
     }
     case '__vbaStrCat': {
@@ -216,14 +217,14 @@ export function runtimeCall(name: string, ctx: RtCtx): void {
       const dst = r('ecx'), src = r('edx');
       if (name === '__vbaVarDup' || name === '__vbaVarMove' || name === '__vbaVarCopy') {
         const v = ctx.variant(src);
-        ctx.store(dst, v);
+        ctx.store(dst, v, { vt: 'Variant' });
         ctx.setReg('eax', dst);
       } else ctx.setReg('eax', src);
       return;
     }
     case '__vbaVarSetObj': case '__vbaVarSetObjAddref': case '__vbaVarSetVar': case '__vbaVarSetUnk': {
       const dst = r('ecx'), src = r('edx');
-      ctx.store(dst, val(src), { set: true });
+      ctx.store(dst, val(src), { set: true, vt: 'Variant' });
       return;
     }
     case '__vbaVarNot': case '__vbaVarNeg': case '__vbaVarAbs': case '__vbaVarInt': case '__vbaVarFix': {

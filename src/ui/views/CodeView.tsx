@@ -54,7 +54,7 @@ export function CodeView({ doc, resolve, onNavigate, cursorVA, onCursor, onConte
     <VirtualList ref={list} className="code" count={lines.length} rowHeight={20} testId={testId}
       onKeyDown={e => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); find.open(); }
-        if (e.key === 'Escape') find.close();
+        if (e.key === 'Escape' && find.visible) find.close();
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           const ix = Math.max(0, Math.min(lines.length - 1, (curIdx < 0 ? 0 : curIdx) + (e.key === 'ArrowDown' ? 1 : -1)));

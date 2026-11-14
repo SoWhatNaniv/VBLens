@@ -11,6 +11,7 @@
 //   5. temp inlining and pretty-printing.
 
 import type { Analysis, Block, Func, FuncCode } from '../analysis/analysis';
+import { declareLocals, inferLocalTypes } from './types';
 import { disassembleFunction, symbolName } from '../analysis/analysis';
 import type { Insn, Operand } from '../x86/decoder';
 import { hex } from '../pe/pe';
@@ -424,7 +425,7 @@ export class NativeDecompiler {
   cur: Stmt[] = [];
 
   /** Store a value at an address; emits an assignment for variables. Returns the stored value reference. */
-  store(addr: E, value: E, st: State, va: number, opts: { set?: boolean; sz?: number; silent?: boolean } = {}): E {
+  store(addr: E, value: E, st: State, va: number, opts: { set?: boolean; sz?: number; silent?: boolean; vt?: string } = {}): E {
     const a = unref(addr);
     if (a.k === 'sp') {
       const o = a.o;
@@ -436,7 +437,7 @@ export class NativeDecompiler {
       if (uv.k === 'sp') { st.slots.set(o, value); return value; }
       if (this.inPrologue && uv.k === 'c' && uv.v === 0) { st.slots.set(o, ZERO_INIT); return value; } // zero-initialisation
       const dst = this.slotE(o);
-      const s: AssignStmt = { k: 'assign', va, dst, src: value, set: opts.set };
+      const s: AssignStmt = { k: 'assign', va, dst, src: value, set: opts.set, vt: opts.vt };
       this.emit(s);
       const ref: E = { k: 'ref', def: s };
       st.slots.set(o, ref);
@@ -446,7 +447,7 @@ export class NativeDecompiler {
     }
     if (a.k === 'raw' && a.t.startsWith('fs:')) return value; // SEH frame manipulation
     const dst = this.lv(addr, opts.sz ?? 4);
-    const s: AssignStmt = { k: 'assign', va, dst, src: value, set: opts.set };
+    const s: AssignStmt = { k: 'assign', va, dst, src: value, set: opts.set, vt: opts.vt };
     this.emit(s);
     return { k: 'ref', def: s };
   }
@@ -550,11 +551,11 @@ export class NativeDecompiler {
       if (off === 0x1c && projObj.kind === 'Class') return { name: 'Method_1C', kind: 'method' };
     }
     if (iface) {
-      let m = lookupMember(iface.name, off);
-      if (!m && iface.base) m = lookupMember(iface.base, off);
+      const m = lookupMember(iface, off);
       if (m) return { name: m.name, kind: m.kind, params: m.params.length, types: m.params };
     }
-    const vba = VBA_IFACES[this.iidAt.get(callVA) ?? ''];
+    const errObj = (() => { const u = unref(objE); return u.k === 'v' && u.n === 'Err'; })();
+    const vba = VBA_IFACES[this.iidAt.get(callVA) ?? ''] ?? (errObj ? VBA_IFACES['{A4C466B8-499F-101B-BB78-00AA00383CBB}'] : undefined);
     if (vba) {
       const m = vba[off];
       if (m) return { name: m[0], kind: m[1], params: m[2] };
@@ -857,7 +858,7 @@ export class NativeDecompiler {
       case 'fldpi': st.fpu.unshift(RAW('3.14159265358979')); return;
       case 'fst': case 'fstp': case 'fist': case 'fistp': {
         const v = top();
-        if (ops[0].t === 'm') this.store(this.addrOf(ops[0], st), v, st, i.va, { sz: ops[0].sz });
+        if (ops[0].t === 'm') this.store(this.addrOf(ops[0], st), v, st, i.va, { sz: ops[0].sz, vt: i.mn.startsWith('fi') ? (ops[0].sz === 2 ? 'Integer' : ops[0].sz === 8 ? 'Currency' : 'Long') : ops[0].sz === 8 ? 'Double' : ops[0].sz === 4 ? 'Single' : undefined });
         else if (ops[0].t === 'r') st.fpu[Number(ops[0].r![3])] = v;
         if (mn.endsWith('p')) st.fpu.shift();
         return;
@@ -1156,7 +1157,7 @@ export class NativeDecompiler {
       fpuPush: (e: E) => { st.fpu.unshift(e); },
       fpuPop: () => st.fpu.shift() ?? RAW('st0'),
       emit: (s: Stmt) => self.emit(s),
-      store: (addr: E, v: E, opts?: { set?: boolean }) => self.store(addr, v, st, va, opts),
+      store: (addr: E, v: E, opts?: { set?: boolean; vt?: string }) => self.store(addr, v, st, va, opts),
       lv: (addr: E) => self.lv(addr),
       variant: (addr: E) => self.variantAt(addr, st),
       deref: (addr: E) => self.load(addr, 4, st),
@@ -1322,7 +1323,11 @@ export class NativeDecompiler {
     }
     this.detectReturn();
     this.postProcess();
-    const lines = this.structure(order);
+    this.restructureCFG(order);
+    let lines = this.structure(order.filter(b => !this.noise.has(b)));
+    // local variable declarations with recovered types
+    const types = inferLocalTypes(this.stmts, [...this.blockCond.values()].filter(c => !!c).map(c => c!.cond), n => /^var_[0-9A-F]+$/.test(n), e => this.controlClassOf(e)?.name);
+    lines = declareLocals(lines, types, /^var_[0-9A-F]+$/);
     return {
       lines,
       header: this.signature(),
@@ -1574,6 +1579,89 @@ export class NativeDecompiler {
   }
 
   // --- structuring ---------------------------------------------------------------------
+  /**
+   * Simplify the CFG before structuring:
+   *   1. jump threading: edges into blocks that show nothing and only jump on go straight
+   *      to the target (the compiler leaves many such blocks behind),
+   *   2. compound conditions: a test whose only predecessor is another test sharing one of
+   *      its targets is merged into it as And / Or (VB evaluates "If a Or b" with jumps).
+   */
+  private restructureCFG(order: number[]) {
+    const vis = (b: number) => (this.blockStmts.get(b) ?? []).some(st => this.stmtText(st) !== null);
+    const live = () => order.filter(b => !this.noise.has(b));
+    const predMap = () => {
+      const m = new Map<number, number[]>();
+      for (const b of live()) for (const t of this.succ.get(b) ?? []) { const l = m.get(t); if (l) l.push(b); else m.set(t, [b]); }
+      return m;
+    };
+    const entry = this.f.va;
+    // blocks reached only through On Error / Resume (no CFG predecessors) stay roots
+    const origPreds = predMap();
+    const roots = live().filter(b => b === entry || !(origPreds.get(b)?.length));
+    // 1. jump threading
+    const through = (t: number) => {
+      const seen = new Set<number>();
+      while (t !== entry && !seen.has(t) && !this.noise.has(t) && !vis(t) && !this.blockCond.get(t)) {
+        const ss = this.succ.get(t) ?? [];
+        if (ss.length !== 1 || ss[0] === t) break;
+        seen.add(t); t = ss[0];
+      }
+      return t;
+    };
+    for (const b of live()) {
+      const ss = this.succ.get(b) ?? [];
+      const ns = ss.map(through);
+      if (ns.every((x, i) => x === ss[i])) continue;
+      this.succ.set(b, ns);
+      const c = this.blockCond.get(b);
+      if (c) this.blockCond.set(b, { ...c, taken: through(c.taken), fall: through(c.fall) });
+    }
+    // drop blocks nothing jumps to any more
+    const dropUnreachable = () => {
+      const seen = new Set<number>(), work: number[] = [];
+      for (const r of roots) if (!this.noise.has(r) && !seen.has(r)) { seen.add(r); work.push(r); }
+      while (work.length) { const x = work.pop()!; for (const t of this.succ.get(x) ?? []) if (!seen.has(t)) { seen.add(t); work.push(t); } }
+      for (const b of live()) if (!seen.has(b)) { this.noise.add(b); this.succ.delete(b); this.blockCond.delete(b); }
+    };
+    dropUnreachable();
+    // 2. compound conditions
+    for (let changed = true, guard = 0; changed && guard < 200; guard++) {
+      changed = false;
+      const preds = predMap();
+      for (const a of live()) {
+        const ca = this.blockCond.get(a);
+        if (!ca || ca.taken === ca.fall) continue;
+        for (const viaTaken of [false, true]) {
+          const b = viaTaken ? ca.taken : ca.fall;
+          const other = viaTaken ? ca.fall : ca.taken;
+          const cb = this.blockCond.get(b);
+          if (!cb || b === a || b === entry || vis(b) || (preds.get(b) ?? []).length !== 1) continue;
+          if (cb.taken === b || cb.fall === b) continue;
+          let merged: { cond: E; taken: number; fall: number } | undefined;
+          if (!viaTaken) {
+            // if A goto X; if B goto ?
+            if (cb.taken === other) merged = { cond: { k: 'b', op: 'Or', l: ca.cond, r: cb.cond }, taken: other, fall: cb.fall };
+            else if (cb.fall === other) merged = { cond: { k: 'b', op: 'Or', l: ca.cond, r: negate(cb.cond) }, taken: other, fall: cb.taken };
+          } else {
+            if (cb.fall === other) merged = { cond: { k: 'b', op: 'And', l: ca.cond, r: cb.cond }, taken: cb.taken, fall: other };
+            else if (cb.taken === other) merged = { cond: { k: 'b', op: 'And', l: ca.cond, r: negate(cb.cond) }, taken: cb.fall, fall: other };
+          }
+          if (!merged || merged.taken === merged.fall) continue;
+          this.blockCond.set(a, merged);
+          this.succ.set(a, [merged.taken, merged.fall]);
+          // B's (invisible) statements feed its condition: keep them with A
+          this.blockStmts.set(a, [...(this.blockStmts.get(a) ?? []), ...(this.blockStmts.get(b) ?? [])]);
+          this.noise.add(b); this.succ.delete(b); this.blockCond.delete(b);
+          this.labelNames.delete(b);
+          changed = true;
+          break;
+        }
+        if (changed) break;
+      }
+    }
+    this.predCache = undefined;
+  }
+
   private structure(order: number[]): Line[] {
     const lines: Line[] = [];
     const preds = new Map<number, number[]>();
@@ -1625,7 +1713,7 @@ export class NativeDecompiler {
       }
     };
     const label = (b: number) => this.labelNames.get(b) ?? `Label_${hex(b)}`;
-    interface Ctx { loopHeader?: number; loopExit?: number; loopBody?: Set<number>; latch?: number }
+    interface Ctx { loopHeader?: number; loopExit?: number; loopBody?: Set<number>; latch?: number; outer?: Ctx }
     const visible = (b: number) => (this.blockStmts.get(b) ?? []).some(st => this.stmtText(st) !== null);
     // follow chains of empty single-successor blocks
     const skipEmpty = (b: number | undefined, limit?: number): number | undefined => {
@@ -1655,17 +1743,72 @@ export class NativeDecompiler {
       this.usedLabels.add(target);
       this.gotoCount++;
     };
+    const exitText = () => this.retType ? 'Exit Function' : 'Exit Sub';
+    const isJump = (t: string) => /^(Exit (Sub|Function|Do)|GoTo \S+)$/.test(t);
+    const postDominatedBy = (n: number, target: number) => { let x: number | undefined = n, g = 0; while (x !== undefined && g++ < 500) { if (x === target) return true; x = ipdom.get(x); } return false; };
+    // everything reachable from n is reached only through n (or from inside `from`)
+    const exclusiveTail = (n: number, from: Set<number>) => {
+      const seen = new Set<number>([n]), work = [n];
+      while (work.length) { const x = work.pop()!; for (const t of this.succ.get(x) ?? []) if (!seen.has(t)) { if (from.has(t)) return false; seen.add(t); work.push(t); } }
+      for (const x of seen) if (x !== n && (preds.get(x) ?? []).some(p => !seen.has(p))) return false;
+      return true;
+    };
+    const onlyFrom = (n: number, set: Set<number>) => (preds.get(n) ?? []).every(p => set.has(p));
+    // a short tail (a few statements, then the join / exit) shared by several branches is
+    // repeated in each branch instead of being reached with GoTo
+    const dupChain = (n: number, stop: number | undefined, ctx: Ctx): number[] | undefined => {
+      const chain: number[] = [];
+      let x: number | undefined = n, count = 0;
+      for (let g = 0; x !== undefined && g < 4; g++) {
+        if (x === stop || x === ctx.loopHeader || x === ctx.loopExit || (chain.length && isExitBlock(x))) return chain.length ? chain : undefined;
+        if (this.blockCond.get(x) || loopHeaders.has(x)) return undefined;
+        const ss: number[] = this.succ.get(x) ?? [];
+        count += (this.blockStmts.get(x) ?? []).filter(st => this.stmtText(st) !== null).length;
+        if (count > 4 || ss.length > 1) return undefined;
+        chain.push(x);
+        if (!ss.length) return chain;
+        x = ss[0];
+      }
+      return undefined;
+    };
     const emitRegion = (start: number | undefined, stop: number | undefined, depth: number, ctx: Ctx, guard = 0): void => {
       let node = start;
       while (node !== undefined && node !== stop && guard++ < 5000) {
         if (ctx.loopHeader !== undefined && node === ctx.loopHeader && emitted.has(node)) { return; }
         if (ctx.loopExit !== undefined && node === ctx.loopExit) {
-          if (!isExitBlock(node) || true) lines.push({ text: 'Exit Do', indent: depth });
+          lines.push({ text: 'Exit Do', indent: depth });
           return;
         }
-        if (ctx.loopBody && !ctx.loopBody.has(node)) { gotoLine(node, depth); return; }
+        if (ctx.loopBody && !ctx.loopBody.has(node)) {
+          // code that runs on the way out of the loop (only reachable from inside it)
+          if (!emitted.has(node) && !isExitBlock(node) && onlyFrom(node, ctx.loopBody) && !loopHeaders.has(node)) {
+            if (ctx.loopExit !== undefined && postDominatedBy(node, ctx.loopExit)) {
+              emitRegion(node, ctx.loopExit, depth, ctx.outer ?? {});
+              lines.push({ text: 'Exit Do', indent: depth });
+              return;
+            }
+            if (ctx.loopExit !== undefined && !postDominatedBy(node, ctx.loopExit) && exclusiveTail(node, ctx.loopBody)) {
+              // leaves the procedure
+              const mark = lines.length;
+              emitRegion(node, undefined, depth, ctx.outer ?? {});
+              const last = lines.slice(mark).filter(l => !l.text.startsWith('\u0000')).pop();
+              if (!last || !isJump(last.text)) lines.push({ text: exitText(), indent: depth });
+              return;
+            }
+          }
+          gotoLine(node, depth); return;
+        }
         if (emitted.has(node)) {
           if (isExitBlock(node) && stop === undefined && ctx.loopHeader === undefined) return;
+          const chain = dupChain(node, stop, ctx);
+          if (chain) {
+            for (const c of chain) emitBlockStmts(c, depth);
+            const last = chain[chain.length - 1];
+            const ss = this.succ.get(last) ?? [];
+            if (!ss.length) { if (stop !== undefined || ctx.loopHeader !== undefined) lines.push({ text: exitText(), indent: depth }); return; }
+            node = ss[0];
+            continue;
+          }
           gotoLine(node, depth); return;
         }
         const body = loopHeaders.get(node);
@@ -1680,7 +1823,9 @@ export class NativeDecompiler {
         const ss = this.succ.get(node) ?? [];
         const cond = this.blockCond.get(node);
         if (cond && ss.length === 2) {
-          const join = ipdom.get(node);
+          let join = ipdom.get(node);
+          // inside a loop, a join after the loop is reached through Exit Do from each branch
+          if (join !== undefined && ctx.loopBody && !ctx.loopBody.has(join)) join = undefined;
           const { taken, fall } = cond;
           const sub = (from: number, cnd: E) => {
             const mark = lines.length;
@@ -1696,17 +1841,28 @@ export class NativeDecompiler {
             lines.push({ text: 'End If', indent: depth });
           } else {
             const mark = sub(fall, negate(cond.cond));
-            const thenLines = lines.length - mark - 1;
             const elseMark = lines.length;
             lines.push({ text: 'Else', indent: depth });
             emitRegion(taken, join, depth + 1, ctx);
-            const realThen = lines.slice(mark + 1, elseMark).some(l => !l.text.startsWith('\u0000'));
-            if (!realThen) {
+            const real = (a: number, b: number) => lines.slice(a, b).filter(l => !l.text.startsWith('\u0000'));
+            const thenPart = real(mark + 1, elseMark), elsePart = real(elseMark + 1, lines.length);
+            const endsInJump = (part: Line[]) => part.length > 0 && isJump(part[part.length - 1].text) && part[part.length - 1].indent === depth + 1;
+            const dedent = (ls: Line[]) => ls.map(l => l.text.startsWith('\u0000') ? l : { ...l, indent: l.indent - 1 });
+            const ifLine = (c: E): Line => ({ text: `If ${printE(c)} Then`, indent: depth, va: this.lastVA(node!) });
+            if (!thenPart.length) {
               // empty Then: invert the condition and drop the Else
-              lines.splice(mark, elseMark - mark + 1, { text: `If ${printE(cond.cond)} Then`, indent: depth, va: this.lastVA(node) });
+              lines.splice(mark, elseMark - mark + 1, ifLine(cond.cond));
+              lines.push({ text: 'End If', indent: depth });
+            } else if (join === undefined && endsInJump(elsePart) && (!endsInJump(thenPart) || elsePart.length <= thenPart.length)) {
+              // guard clause: "If c Then ... Exit Do / Exit Sub / GoTo" and the other branch after it
+              const thenLs = lines.slice(mark + 1, elseMark), elseLs = lines.slice(elseMark + 1);
+              lines.splice(mark, lines.length - mark, ifLine(cond.cond), ...elseLs, { text: 'End If', indent: depth }, ...dedent(thenLs));
+            } else if (join === undefined && endsInJump(thenPart)) {
+              const thenLs = lines.slice(mark + 1, elseMark), elseLs = lines.slice(elseMark + 1);
+              lines.splice(mark, lines.length - mark, ifLine(negate(cond.cond)), ...thenLs, { text: 'End If', indent: depth }, ...dedent(elseLs));
+            } else {
+              lines.push({ text: 'End If', indent: depth });
             }
-            void thenLines;
-            lines.push({ text: 'End If', indent: depth });
           }
           if (join === undefined) return;
           node = join;
@@ -1723,8 +1879,10 @@ export class NativeDecompiler {
     const emitLoopAt = (header: number, body: Set<number>, depth: number, outer: Ctx): number | undefined => {
       const exits = new Set<number>();
       for (const x of body) for (const t of this.succ.get(x) ?? []) if (!body.has(t)) exits.add(t);
-      const exit = [...exits].sort((a, b) => (rpoIndex.get(a) ?? 0) - (rpoIndex.get(b) ?? 0))[0];
-      const inner: Ctx = { loopHeader: header, loopExit: exit, loopBody: body };
+      // the loop's follow: the first exit in program order that does not just leave the procedure
+      const sorted = [...exits].sort((a, b) => (rpoIndex.get(a) ?? 0) - (rpoIndex.get(b) ?? 0));
+      const exit = sorted.find(x => !isExitBlock(x)) ?? sorted[0];
+      const inner: Ctx = { loopHeader: header, loopExit: exit, loopBody: body, outer };
       const hc = this.blockCond.get(header);
       // Do While form: header only tests a condition
       if (hc && !visible(header) && (body.has(hc.taken) !== body.has(hc.fall))) {
@@ -1736,7 +1894,6 @@ export class NativeDecompiler {
         lines.push({ text: `Do While ${printE(stayCond)}`, indent: depth, va: this.lastVA(header) });
         emitRegion(stay, header, depth + 1, { ...inner, loopExit: out });
         lines.push({ text: 'Loop', indent: depth });
-        void outer;
         return out;
       }
       // Do ... Loop While form: a latch block tests the condition at the bottom
@@ -2039,6 +2196,7 @@ function cleanupLines(lines: Line[]): Line[] {
   }
   out = forLoops(out);
   out = elseIfs(out);
+  out = selectCases(out);
   while (out.length && out[out.length - 1].text === '') out.pop();
   return out;
 }
@@ -2065,12 +2223,89 @@ function forLoops(lines: Line[]): Line[] {
     if (!ini) continue;
     // the counter must not be assigned elsewhere inside the body
     if (lines.slice(k + 1, end - 1).some(l => l.text.startsWith(v + ' = '))) continue;
+    // Exit Do statements of this loop (not of a nested Do) become Exit For
+    for (let j = k + 1; j < end; j++) {
+      if (lines[j].text !== 'Exit Do') continue;
+      let ind = lines[j].indent, owner = -1;
+      for (let q = j - 1; q >= k; q--) {
+        if (lines[q].indent >= ind) continue;
+        ind = lines[q].indent;
+        if (q === k || /^(Do\b|For )/.test(lines[q].text)) { owner = q; break; }
+      }
+      if (owner === k) lines[j] = { ...lines[j], text: 'Exit For' };
+    }
     const stepTxt = step === '1' ? '' : ` Step ${step}`;
     lines[k - 1] = { ...init, text: `For ${v} = ${ini[1]} To ${m[3]}${stepTxt}` };
     lines.splice(k, 1); // drop "Do While"
     end -= 1;
     lines.splice(end - 1, 2, { text: `Next ${v}`, indent: d });
     for (let j = k; j < end - 1; j++) lines[j] = { ...lines[j], indent: lines[j].indent };
+  }
+  return lines;
+}
+
+/** Split a condition at top-level " Or " (outside strings and parentheses). */
+function splitOr(t: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, inStr = false, last = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === '"') inStr = !inStr;
+    else if (!inStr && c === '(') depth++;
+    else if (!inStr && c === ')') depth--;
+    else if (!inStr && depth === 0 && t.startsWith(' Or ', i)) { parts.push(t.slice(last, i)); last = i + 4; i += 3; }
+  }
+  parts.push(t.slice(last));
+  return parts;
+}
+
+/** "x = 1 Or x = 2" -> { x, values: ['1', '2'] } (x must be a plain variable or member). */
+function caseCond(cond: string, x?: string): { x: string; values: string[] } | undefined {
+  const values: string[] = [];
+  for (const part of splitOr(cond)) {
+    let p = part.trim();
+    if (p.startsWith('(') && p.endsWith(')') && splitOr(p.slice(1, -1)).length === 1) p = p.slice(1, -1);
+    const m = /^([A-Za-z_][\w.]*(?:\(\w+\))?) = (.+)$/.exec(p);
+    if (!m || (x !== undefined && m[1] !== x)) return undefined;
+    if (/ (And|Or|Xor) | = /.test(m[2]) && !/^".*"$/.test(m[2])) return undefined;
+    x = m[1];
+    values.push(m[2]);
+  }
+  return x === undefined ? undefined : { x, values };
+}
+
+/** If x = a Then / ElseIf x = b Or x = c Then / ... -> Select Case x / Case a / Case b, c */
+export function selectCases(lines: Line[]): Line[] {
+  for (let k = 0; k < lines.length; k++) {
+    const m = /^If (.+) Then$/.exec(lines[k].text);
+    if (!m) continue;
+    const d = lines[k].indent;
+    const first = caseCond(m[1]);
+    if (!first) continue;
+    // collect the arms of this If at indent d
+    const arms: { at: number; values?: string[] }[] = [{ at: k, values: first.values }];
+    let end = -1, ok = true;
+    for (let j = k + 1; j < lines.length; j++) {
+      const l = lines[j];
+      if (l.indent < d) { ok = false; break; }
+      if (l.indent !== d || l.kind === 'label') continue;
+      if (l.text === 'End If') { end = j; break; }
+      if (l.text === 'Else') { arms.push({ at: j }); continue; }
+      const em = /^ElseIf (.+) Then$/.exec(l.text);
+      const c = em && caseCond(em[1], first.x);
+      if (!c) { ok = false; break; }
+      arms.push({ at: j, values: c.values });
+    }
+    const conds = arms.filter(a => a.values).length;
+    if (!ok || end < 0 || conds < 3) continue;
+    const out: Line[] = [{ ...lines[k], text: `Select Case ${first.x}` }];
+    for (let a = 0; a < arms.length; a++) {
+      const arm = arms[a], next = a + 1 < arms.length ? arms[a + 1].at : end;
+      out.push({ text: arm.values ? `Case ${arm.values.join(', ')}` : 'Case Else', indent: d + 1, va: lines[arm.at].va });
+      for (let j = arm.at + 1; j < next; j++) out.push(lines[j].kind === 'label' ? lines[j] : { ...lines[j], indent: lines[j].indent + 1 });
+    }
+    out.push({ text: 'End Select', indent: d });
+    lines.splice(k, end - k + 1, ...out);
   }
   return lines;
 }

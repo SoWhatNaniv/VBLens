@@ -782,7 +782,7 @@ function ProcBody({ tab, gen, updTab, navigate, makeResolver, onPeek, codeContex
         <div className="spacer" />
         {code.data?.errors?.length ? <span className="chip amber" title={code.data.errors.join('\n')}>{code.data.errors.length} note{code.data.errors.length > 1 ? 's' : ''}</span> : null}
         {code.data && code.data.lines.some(l => /\b(DispID|Method)_[0-9A-F]+/.test(l.text)) && (
-          <button className="btn sm ghost" onClick={tlb} title="Some ActiveX members are unnamed. Load the control's .ocx/.tlb (e.g. C:\Windows\SysWOW64\MSCOMCTL.OCX) to name them." style={{ color: 'var(--warn)' }}><I.lib size={14} /><span className="lbl">Name ActiveX members…</span></button>
+          <button className="btn sm ghost" onClick={tlb} title="Some ActiveX members are unnamed. The common VB controls are built in; for third-party controls, load the control's .ocx/.tlb to name them." style={{ color: 'var(--warn)' }}><I.lib size={14} /><span className="lbl">Name ActiveX members…</span></button>
         )}
         <button className="btn sm ghost" onClick={() => showXrefs(tab.va!, tab.title)} title="Cross references (X)"><I.ref size={14} /><span className="lbl">Xrefs</span></button>
         <button className="btn sm ghost" onClick={() => rename(tab.va!)} title="Rename (N)"><I.tag size={14} /><span className="lbl">Rename</span></button>

@@ -51,7 +51,7 @@ export function DisasmView({ rows, cursorVA, onCursor, onNavigate, onContext, on
     <VirtualList ref={list} className="code" count={flat.length} rowHeight={20} testId="disasm"
       onKeyDown={e => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); find.open(); }
-        if (e.key === 'Escape') find.close();
+        if (e.key === 'Escape' && find.visible) find.close();
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           let k = cur < 0 ? 0 : cur;

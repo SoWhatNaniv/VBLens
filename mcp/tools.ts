@@ -162,7 +162,7 @@ Typical next steps: vb_list_objects, vb_list_api_declares, vb_list_strings, then
     inputSchema: z.strictObject({
       path: z.string().min(1).max(2000).describe('Absolute path of the file, e.g. "C:\\\\samples\\\\app.exe" or "/home/user/app.exe"'),
       type_libraries: z.array(z.string().min(1).max(2000)).max(16).optional()
-        .describe('Optional paths of ActiveX .ocx/.tlb/.dll files (e.g. MSCOMCTL.OCX) used to name third-party control events, properties and methods'),
+        .describe('Optional paths of ActiveX .ocx/.tlb/.dll files used to name third-party control events, properties and methods. The controls shipped with VB5/VB6 (MSCOMCTL, COMCTL32, MSCOMCT2, COMCT332, COMDLG32, MSWINSCK, MSINET, RICHTX32, MSCOMM32, MSFLXGRD, MSHFLXGD, TABCTL32, MCI32, MSMAPI32, MSMASK32, SYSINFO, PICCLP32, MSCHRT20, data controls) are built in'),
       reload: z.boolean().default(false).describe('Analyse again even if this path is already open'),
       response_format: FormatArg,
     }),
@@ -818,7 +818,7 @@ view="frm": the reconstructed .frm definition text, paginated by line.`,
 
   server.registerTool('vb_load_type_library', {
     title: 'Load an ActiveX type library',
-    description: 'Read the type library of an ActiveX control file (.ocx, .tlb, .dll such as MSCOMCTL.OCX, MSFLXGRD.OCX) so that its controls, events, properties and methods get real names instead of Control_Event12 / Method_XX / DispID_XX. Applies to the open file immediately; pass the libraries to vb_open_file (type_libraries) to have them applied during analysis as well. The library is only parsed, never loaded or executed.',
+    description: 'Read the type library of an ActiveX control file (.ocx, .tlb, .dll) so that its controls, events, properties and methods get real names instead of Control_Event12 / Method_XX / DispID_XX. Applies to the open file immediately; pass the libraries to vb_open_file (type_libraries) to have them applied during analysis as well. The library is only parsed, never loaded or executed.',
     inputSchema: z.strictObject({
       file: FileArg,
       path: z.string().min(1).max(2000).describe('Absolute path of the .ocx/.tlb/.dll on the machine this server runs on'),

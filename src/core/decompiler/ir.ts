@@ -19,7 +19,7 @@ export type E =
   | { k: 'reg'; r: string }; // unknown incoming register
 
 export type Stmt =
-  | { k: 'assign'; va: number; dst: E; src: E; set?: boolean; temp?: boolean; inline?: boolean; idx?: number; useIdx?: number[] }
+  | { k: 'assign'; va: number; dst: E; src: E; set?: boolean; temp?: boolean; inline?: boolean; idx?: number; useIdx?: number[]; vt?: string }
   | { k: 'expr'; va: number; e: E }
   | { k: 'text'; va: number; t: string }
   | { k: 'comment'; va: number; t: string };
@@ -153,11 +153,21 @@ export function walkE(e: E, fn: (x: E) => void) {
   }
 }
 
+const INV_CMP: Record<string, string> = { '=': '<>', '<>': '=', '<': '>=', '>=': '<', '>': '<=', '<=': '>' };
+/** A condition built only from comparisons, Not, And and Or (safe for De Morgan). */
+function isLogical(e: E): boolean {
+  const x = unref(e);
+  if (x.k === 'b' && INV_CMP[x.op]) return true;
+  if (x.k === 'b' && (x.op === 'And' || x.op === 'Or')) return isLogical(x.l) && isLogical(x.r);
+  return x.k === 'u' && x.op === 'Not' && isLogical(x.e);
+}
+
 export function negate(e: E): E {
   const x = unref(e);
   if (x.k === 'b') {
-    const inv: Record<string, string> = { '=': '<>', '<>': '=', '<': '>=', '>=': '<', '>': '<=', '<=': '>' };
-    if (inv[x.op]) return { k: 'b', op: inv[x.op], l: x.l, r: x.r };
+    if (INV_CMP[x.op]) return { k: 'b', op: INV_CMP[x.op], l: x.l, r: x.r };
+    // Not (a Or b) -> Not a And Not b, for conditions made of comparisons
+    if ((x.op === 'And' || x.op === 'Or') && isLogical(x)) return { k: 'b', op: x.op === 'And' ? 'Or' : 'And', l: negate(x.l), r: negate(x.r) };
   }
   if (x.k === 'u' && x.op === 'Not') return x.e;
   return { k: 'u', op: 'Not', e };

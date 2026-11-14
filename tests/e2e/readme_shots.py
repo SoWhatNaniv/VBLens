@@ -117,7 +117,7 @@ print('screenshots written to', OUT)
 # shrink for the README: 2000 px wide, 256-colour PNG (a few hundred KB each)
 from PIL import Image
 for f in os.listdir(OUT):
-    if f.endswith('.png'):
+    if f.endswith('.png') and f != 'banner.png':
         im = Image.open(os.path.join(OUT, f)).convert('RGB')
         if im.width > 2000: im = im.resize((2000, round(im.height * 2000 / im.width)), Image.LANCZOS)
         im.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).save(os.path.join(OUT, f), optimize=True)

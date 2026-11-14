@@ -1,6 +1,6 @@
 {
   "name": "vblens",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Free and open-source disassembler and decompiler for Visual Basic 5/6 executables (native code and P-Code): desktop app with an MCP server for AI agents.",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,8 @@
     "test:mcp:corpus": "tsx mcp/corpus.ts",
     "desktop": "npm run build && npm run build:mcp && node desktop/build.mjs stage && electron build/app",
     "dist:win": "npm run build && npm run build:mcp && node desktop/build.mjs win32",
-    "dist:linux": "npm run build && npm run build:mcp && node desktop/build.mjs linux"
+    "dist:linux": "npm run build && npm run build:mcp && node desktop/build.mjs linux",
+    "test:unit": "tsx tests/unit-test.ts"
   },
   "keywords": [
     "visual basic",

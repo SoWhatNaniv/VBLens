@@ -83,7 +83,7 @@ async def main():
         # ---- the agent sees what the user looks at
         await pg.click(P + '[data-testid=viewseg] button[title=Code]')
         await pg.wait_for_selector(P + '[data-testid=code] .cl')
-        line = pg.locator(P + '[data-testid=code] .cl').nth(6)
+        line = pg.locator(P + '[data-testid=code] .cl').filter(has=pg.locator('.addr', has_text=re.compile(r'[0-9A-F]'))).nth(4)
         addr = (await line.locator('.addr').inner_text()).strip()
         await line.locator('.src').click(position={'x': 2, 'y': 5})
         await asyncio.sleep(0.6)

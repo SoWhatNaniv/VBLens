@@ -5,6 +5,7 @@
 // licensed "visualbasic" crate (data/opcodes.csv) — see third_party/.
 
 import type { Image } from '../pe/pe';
+import { selectCases } from '../decompiler/native';
 import { hex } from '../pe/pe';
 import type { VBProject } from '../vb/structures';
 import type { Analysis } from '../analysis/analysis';
@@ -489,7 +490,7 @@ export function decompilePCodeProc(img: Image, project: VBProject, an: Analysis,
   const twins = [...(procs?.values() ?? [])].filter(q => q.obj === p.obj && q.name === p.name);
   if (isObj && twins.length > 1) kw = retOff !== undefined ? 'Public Property Get' : 'Public Property Let';
   return {
-    lines: lines.map(l => ({ ...l, kind: l.kind ?? (l.text.startsWith("'") ? 'comment' : 'code') })),
+    lines: selectCases(lines.map(l => ({ ...l, kind: l.kind ?? (l.text.startsWith("'") ? 'comment' : 'code') }))),
     header: `${kw} ${p.name}(${(argNames.size ? [...argNames.values()] : Array.from({ length: nargs }, (_, k) => `arg_${hex((isObj ? 0xc : 8) + k * 4)}`)).join(', ')})${asType ? ' As ' + asType : ''}`,
     errors,
     stats: { blocks: 0, statements: lines.length, gotos: lines.filter(l => /\bGoTo loc_/.test(l.text)).length },

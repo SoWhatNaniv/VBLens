@@ -91,7 +91,7 @@ with sync_playwright() as p:
     def t6():
         open_proc('kelet.show_big_arrival'); pg.wait_for_timeout(400)
         line = [x for x in pg.query_selector_all('.tabpane:not(.hidden) [data-testid=code] .cl') if '"כ"' in x.inner_text()]
-        if not line: rep(False, 'hebrew line found'); return
+        if not line: rep(False, 'hebrew line found', [x.inner_text()[:40] for x in pg.query_selector_all('.tabpane:not(.hidden) [data-testid=code] .cl')][:14] or pg.inner_text('.tabpane:not(.hidden)')[:300]); return
         iso = pg.evaluate('''() => { const s = [...document.querySelectorAll('.tabpane:not(.hidden) [data-testid=code] .t-str')].find(e => /[\\u0590-\\u05ff]/.test(e.textContent)); return s ? getComputedStyle(s).unicodeBidi : 'none'; }''')
         rep(iso in ('isolate', 'plaintext', 'isolate-override'), 'string tokens are bidi-isolated', iso)
     probe('bidi', t6)

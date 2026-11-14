@@ -32,7 +32,7 @@
 
 Visual Basic 6 is long dead, but its executables aren't. They run line-of-business software, old installers and a steady stream of malware. Most other VB decompilers are closed source, cost money, or stopped being updated years ago. VBLens is a modern, open alternative:
 
-- 🔍 **Decompiles native code *and* P-Code** into structured VB: `If/ElseIf`, `For/Next`, `Do/Loop`, `On Error GoTo`, and calls to the VB runtime, COM and APIs.
+- 🔍 **Decompiles native code *and* P-Code** into structured VB: `If/ElseIf`, `Select Case`, `For/Next`, `Do/Loop`, `Exit For`, `And`/`Or` conditions, `On Error GoTo`, and calls to the VB runtime, COM and APIs. Locals are declared with their recovered types.
 - 🖼️ **Rebuilds the forms** and draws them as they looked, with menus, control arrays, fonts, pictures and right-to-left text.
 - 🧭 **IDA-style workspace**: code, disassembly, graph and split views, all linked. Cross references, rename, comments and a command palette for everything.
 - 🤖 **Built for AI agents**: an MCP server lets Claude Code, Cursor and other agents open the same file, read the code and show you what they find in your window.
@@ -78,6 +78,8 @@ Decodes the binary form streams and draws every form in classic Windows style. T
 - An IA-32 disassembler that matches Capstone instruction for instruction on 700k+ VB instructions.
 - Symbolic execution that understands ~400 VB runtime functions (`__vba*`, `rtc*`), COM vtable calls, late binding, variants, arrays and error handling.
 - Recovers return values, control arrays (`Me.Text1(i)`), string literals, and integer division by constants.
+- Rebuilds structured control flow: `And`/`Or` conditions, `Select Case`, guard clauses, `Exit For`/`Exit Do`. More than 90% of procedures come out with no `GoTo` at all.
+- Declares every local with a recovered type (`String`, `Long`, `Boolean`, `Date`, control classes, `New` objects). Win32 structures passed to APIs (`STARTUPINFO`, `PROCESS_INFORMATION`, `CONTEXT`, `PROCESSENTRY32`...) are named too. For counters become `i`, `j`, `k`.
 
 </td>
 <td width="50%"><img src="docs/split.png" alt="Code and disassembly side by side"></td>
@@ -90,7 +92,7 @@ Decodes the binary form streams and draws every form in classic Windows style. T
 - **P-Code decompiler**: disassembles all six opcode tables and turns the stack machine into structured VB with typed functions and `Property Get/Let`.
 - **Control-flow graph** with pan, zoom and a minimap.
 - **Strings, imports, API declares, references** and a **hex view** with a data inspector.
-- Load an `.ocx`/`.tlb` to name ActiveX events, properties and methods.
+- **Common ActiveX controls built in**: Winsock, Inet, CommonDialog, RichTextBox, MSComm, MSComctl (TreeView, ListView, Toolbar…), FlexGrid, SSTab, MCI and more. Their events, properties and methods are named without any `.ocx` files. For third-party controls, load the `.ocx`/`.tlb`.
 
 </td>
 </tr>
@@ -201,7 +203,7 @@ tests/                command-line checks against real binaries, e2e tests
 
 ## ⚠️ Limitations
 
-Decompiling compiled VB always loses some information. Local variable names, comments and constant names aren't stored in the binary, so locals show as `var_XX` and unknown parameters as `arg_XX`. Use rename (`N`) to fix them. Members of third-party ActiveX controls stay as `Method_XX` / `DispID_XX` until you load the control's type library. Some optimized native code still falls back to `GoTo`. The P-Code opcode table comes from community research, so a few rarely used opcodes are shown as comments.
+Decompiling compiled VB always loses some information. Local variable names, comments and constant names aren't stored in the binary, so locals show as `var_XX` and unknown parameters as `arg_XX`. Use rename (`N`) on procedures and globals to name them. Members of third-party ActiveX controls stay as `Method_XX` / `DispID_XX` until you load the control's type library. A few procedures still use `GoTo` where the compiled code really jumps across blocks (shared tails of loops, for example). Recovered types are inferred from how a variable is used, so a variable nothing tells anything about is declared `As Variant`. The P-Code opcode table comes from community research, so a few rarely used opcodes are shown as comments.
 
 ## 🤝 Contributing
 

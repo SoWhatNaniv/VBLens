@@ -58,7 +58,7 @@ with sync_playwright() as p:
     shot(pg, '24-ctx')
     pg.keyboard.press('Escape'); pg.mouse.click(700, 600)
     # comment
-    rows = pg.query_selector_all('.tabpane:not(.hidden) [data-testid=code] .cl')
+    rows = [r for r in pg.query_selector_all('.tabpane:not(.hidden) [data-testid=code] .cl') if (r.query_selector('.addr') and r.query_selector('.addr').inner_text().strip())]
     rows[4].click(); pg.keyboard.press(';'); pg.wait_for_selector('[data-testid=prompt]'); pg.keyboard.type('checked by niv'); pg.keyboard.press('Enter'); pg.wait_for_timeout(1000)
     check('checked by niv' in pg.inner_text('.tabpane:not(.hidden) [data-testid=code]'), 'comment shows in code')
     # palette search for control + designer selection
